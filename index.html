@@ -1,0 +1,185 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Virtual Lipstick Try-On App</title>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/vision_bundle.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background-color: #f3f4f6; }
+    #output_canvas { display: block; margin: 0 auto; }
+  </style>
+</head>
+<body class="flex flex-col items-center justify-center min-h-screen">
+  <h1 class="text-3xl font-bold mb-4">Virtual Lipstick Try-On</h1>
+  <video id="webcam" autoplay playsinline style="display: none;"></video>
+  <canvas id="output_canvas" width="640" height="480" class="rounded-lg shadow-lg mb-4"></canvas>
+  <div class="flex space-x-4 mb-4">
+    <select id="lipstick_select" class="p-2 border rounded">
+      <option value="">No Lipstick</option>
+      <option value="rgba(165,42,42,0.7)">MAC Ruby Woo</option>
+      <option value="rgba(153,0,0,0.7)">Revlon Really Red</option>
+      <option value="rgba(187,10,33,0.7)">NARS Cruella</option>
+      <option value="rgba(199,21,133,0.7)">Maybelline Superstay Ruby</option>
+      <option value="rgba(139,0,0,0.7)">Dior Rouge</option>
+    </select>
+    <label>Brightness: <input id="brightness_slider" type="range" min="0" max="200" value="100" class="w-32"></label>
+    <select id="background_select" class="p-2 border rounded">
+      <option value="camera">Camera Background</option>
+      <option value="https://images.unsplash.com/photo-1514933651103-005eec4c731b">Dimly Lit Restaurant</option>
+      <option value="https://images.unsplash.com/photo-1497366305263-2961ce91c4b0">Bright Office</option>
+    </select>
+  </div>
+  <script type="module">
+    const { FaceLandmarker, FilesetResolver, DrawingUtils, ImageSegmenter } = window;
+    let faceLandmarker, imageSegmenter;
+    const video = document.getElementById("webcam");
+    const canvasElement = document.getElementById("output_canvas");
+    const canvasCtx = canvasElement.getContext("2d");
+    const lipstickSelect = document.getElementById("lipstick_select");
+    const brightnessSlider = document.getElementById("brightness_slider");
+    const backgroundSelect = document.getElementById("background_select");
+    let lipstickColor = "";
+    let brightness = 1.0;
+    let backgroundImage = null;
+    let useCameraBg = true;
+
+    // Lip landmarks indices (outer lips)
+    const upperLip = [61, 185, 40, 39, 37, 0, 267, 269, 270, 409, 291];
+    const lowerLip = [146, 91, 181, 84, 17, 314, 405, 321, 375, 291, 308, 324, 318, 402, 317, 14, 87, 178, 88, 95];
+
+    async function createModels() {
+      const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm");
+      faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
+        baseOptions: { modelAssetPath: `https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task` },
+        runningMode: "VIDEO", numFaces: 1
+      });
+      imageSegmenter = await ImageSegmenter.createFromOptions(vision, {
+        baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite" },
+        runningMode: "VIDEO", outputCategoryMask: true
+      });
+    }
+
+    async function enableCam() {
+      const constraints = { video: { facingMode: "user" } };
+      navigator.mediaDevices.getUserMedia(constraints).then(stream => {
+        video.srcObject = stream;
+        video.addEventListener("loadeddata", predictWebcam);
+      });
+    }
+
+    async function predictWebcam() {
+      canvasElement.style.width = video.videoWidth;
+      canvasElement.style.height = video.videoHeight;
+      canvasElement.width = video.videoWidth;
+      canvasElement.height = video.videoHeight;
+
+      let nowInMs = performance.now();
+      const segmentationResult = await imageSegmenter.segmentForVideo(video, nowInMs);
+      const faceResult = await faceLandmarker.detectForVideo(video, nowInMs);
+
+      applySegmentationAndEffects(segmentationResult, faceResult);
+
+      requestAnimationFrame(predictWebcam);
+    }
+
+    function applySegmentationAndEffects(segmentationResult, faceResult) {
+      canvasCtx.save();
+      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+      if (useCameraBg) {
+        canvasCtx.drawImage(video, 0, 0, canvasElement.width, canvasElement.height);
+      } else if (backgroundImage) {
+        canvasCtx.drawImage(backgroundImage, 0, 0, canvasElement.width, canvasElement.height);
+      }
+
+      if (!useCameraBg && segmentationResult.categoryMask) {
+        const mask = segmentationResult.categoryMask.getAsUint8Array();
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = canvasElement.width;
+        tempCanvas.height = canvasElement.height;
+        const tempCtx = tempCanvas.getContext('2d');
+        tempCtx.drawImage(video, 0, 0, tempCanvas.width, tempCanvas.height);
+
+        const imageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+        const data = imageData.data;
+
+        for (let i = 0; i < mask.length; i++) {
+          if (mask[i] === 0) { // background
+            data[i * 4 + 3] = 0; // make transparent
+          } else {
+            // Apply brightness to person
+            for (let j = 0; j < 3; j++) {
+              data[i * 4 + j] = Math.min(255, Math.max(0, data[i * 4 + j] * brightness));
+            }
+          }
+        }
+        tempCtx.putImageData(imageData, 0, 0);
+        canvasCtx.drawImage(tempCanvas, 0, 0);
+      } else {
+        // If camera bg, apply brightness to whole
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = canvasElement.width;
+        tempCanvas.height = canvasElement.height;
+        const tempCtx = tempCanvas.getContext('2d');
+        tempCtx.drawImage(video, 0, 0, tempCanvas.width, tempCanvas.height);
+        const imageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+        const data = imageData.data;
+        for (let i = 0; i < data.length; i += 4) {
+          for (let j = 0; j < 3; j++) {
+            data[i + j] = Math.min(255, Math.max(0, data[i + j] * brightness));
+          }
+        }
+        tempCtx.putImageData(imageData, 0, 0);
+        canvasCtx.drawImage(tempCanvas, 0, 0);
+      }
+
+      // Draw lipstick if selected and face detected
+      if (lipstickColor && faceResult.faceLandmarks && faceResult.faceLandmarks.length > 0) {
+        const landmarks = faceResult.faceLandmarks[0];
+        canvasCtx.fillStyle = lipstickColor;
+        // Upper lip
+        canvasCtx.beginPath();
+        upperLip.forEach((idx, i) => {
+          const {x, y} = landmarks[idx];
+          if (i === 0) canvasCtx.moveTo(x * canvasElement.width, y * canvasElement.height);
+          else canvasCtx.lineTo(x * canvasElement.width, y * canvasElement.height);
+        });
+        canvasCtx.closePath();
+        canvasCtx.fill();
+
+        // Lower lip
+        canvasCtx.beginPath();
+        lowerLip.forEach((idx, i) => {
+          const {x, y} = landmarks[idx];
+          if (i === 0) canvasCtx.moveTo(x * canvasElement.width, y * canvasElement.height);
+          else canvasCtx.lineTo(x * canvasElement.width, y * canvasElement.height);
+        });
+        canvasCtx.closePath();
+        canvasCtx.fill();
+      }
+
+      canvasCtx.restore();
+    }
+
+    lipstickSelect.addEventListener("change", (e) => { lipstickColor = e.target.value; });
+    brightnessSlider.addEventListener("input", (e) => { brightness = e.target.value / 100; });
+    backgroundSelect.addEventListener("change", (e) => {
+      if (e.target.value === "camera") {
+        useCameraBg = true;
+      } else {
+        useCameraBg = false;
+        backgroundImage = new Image();
+        backgroundImage.crossOrigin = "anonymous";
+        backgroundImage.src = e.target.value;
+        backgroundImage.onload = () => {}; // Ready to draw
+      }
+    });
+
+    await createModels();
+    enableCam();
+  </script>
+</body>
+</html>
