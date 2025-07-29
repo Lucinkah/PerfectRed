@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Virtual Lipstick Try-On App</title>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0" crossorigin="anonymous"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background-color: #f3f4f6; }
+    #output_canvas { display: block; margin: 0 auto; }
+    #photo_canvas { display: none; }
+    .title-text { color: rgba(255, 0, 0, 0.7); font-size: 1.5rem; font-weight: bold; margin-bottom: 1rem; }
+  </style>
+</head>
+<body class="flex flex-col items-center justify-center min-h-screen">
+  <h1 class="title-text">The Perfect Red</h1>
+  <video id="webcam" autoplay playsinline style="display: none;"></video>
+  <canvas id="output_canvas" width="1280" height="720" class="rounded-lg shadow-lg mb-4"></canvas>
+  <canvas id="photo_canvas" width="1280" height="720"></canvas>
+  <div class="flex space-x-4 mb-4">
+    <select id="lipstick_select" class="p-2 border rounded">
+      <option value="">No Lipstick</option>
+      <option value="rgba(165,42,42,0.7)">MAC Ruby Woo</option>
+      <option value="rgba(153,0,0,0.7)">Revlon Really Red</option>
+      <option value="rgba(187,10,33,0.7)">NARS Cruella</option>
+      <option value="rgba(199,21,133,0.7)">Maybelline Superstay Ruby</option>
+      <option value="rgba(139,0,0,0.7)">Dior Rouge</option>
+      <option value="rgba(200,16,46,0.7)">Chanel Rouge Coco Flash</option>
+      <option value="rgba(170,0,0,0.7)">YSL Rouge Pur Couture</option>
+      <option value="rgba(188,0,45,0.7)">Tom Ford Cherry Lush</option>
+      <option value="clara_bow">Clara Bow Lip Shape</option>
+    </select>
+    <label>Brightness: <input id="brightness_slider" type="range" min="0" max="200" value="100" class="w-32"></label>
+    <select id="background_select" class="p-2 border rounded">
+      <option value="camera">Camera Background</option>
+      <option value="https://images.pexels.com/photos/3771074/pexels-photo-3771074.jpeg?auto=compress&cs=tinysrgb&w=1280&h=720">Dimly Lit Restaurant</option>
+      <option value="https://images.pexels.com/photos/4439444/pexels-photo-4439444.jpeg?auto=compress&cs=tinysrgb&w=1280&h=720">Bright Office</option>
+    </select>
+    <button id="capture_button" class="bg-green-500 text-white px-4 py-2 rounded">Capture Photo</button>
+  </div>
+  <script type="module">
+    import { FaceLandmarker, FilesetResolver, ImageSegmenter } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0';
+    let faceLandmarker, imageSegmenter;
+    const video = document.getElementById("webcam");
+    const canvasElement = document.getElementById("output_canvas");
+    const photoCanvas = document.getElementById("photo_canvas");
+    const canvasCtx = canvasElement.getContext("2d");
+    const photoCtx = photoCanvas.getContext("2d");
+    const lipstickSelect = document.getElementById("lipstick_select");
